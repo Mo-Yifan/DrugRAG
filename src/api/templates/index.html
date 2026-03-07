@@ -1,0 +1,180 @@
+<!-- src/api/templates/index.html -->
+{% extends "base.html" %}
+
+{% block title %}DrugBank Clinical RAG{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8 max-w-4xl">
+    <h1 class="text-3xl font-bold text-center mb-8 text-blue-800">💊 DrugBank 临床药物问答</h1>
+    
+    <!-- 输入卡片 -->
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-8 border border-gray-100">
+        <div class="mb-6">
+            <label for="question" class="block text-gray-700 font-semibold mb-2 text-lg">请输入您的药物问题 (建议英文):</label>
+            <textarea 
+                id="question" 
+                rows="3" 
+                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition text-gray-700" 
+                placeholder="例如：How does Aspirin work? What are the side effects of Metformin?"></textarea>
+        </div>
+        
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <label class="flex items-center cursor-pointer select-none">
+                <input type="checkbox" id="fda_only" class="w-4 h-4 text-blue-600 rounded focus:ring-blue-500">
+                <span class="ml-2 text-gray-600">仅限 FDA 批准药物</span>
+            </label>
+            
+            <!-- 🔥 关键修复：按钮部分 -->
+            <button 
+                onclick="askQuestion()" 
+                id="submit-btn" 
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition duration-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-95"
+            >
+                <span id="btn-text">🔍 查询</span>
+                
+                <!-- Loading 图标：强制固定宽高 -->
+                <svg 
+                    id="btn-loading" 
+                    class="animate-spin hidden" 
+                    style="width: 20px; height: 20px;" 
+                    xmlns="http://www.w3.org/2000/svg" 
+                    fill="none" 
+                    viewBox="0 0 24 24"
+                >
+                    <circle 
+                        class="opacity-25" 
+                        cx="12" 
+                        cy="12" 
+                        r="10" 
+                        stroke="currentColor" 
+                        stroke-width="4"
+                    ></circle>
+                    <path 
+                        class="opacity-75" 
+                        fill="currentColor" 
+                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 结果显示区域 -->
+    <div id="result-area" class="hidden space-y-6">
+        <!-- 回答卡片 -->
+        <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <span class="mr-2">🤖</span> AI 回答
+            </h2>
+            <div id="answer" class="text-gray-700 leading-relaxed whitespace-pre-line text-lg"></div>
+        </div>
+
+        <!-- 引用来源卡片 -->
+        <div class="bg-gray-50 rounded-xl shadow-md p-6 border border-gray-200">
+            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <span class="mr-2">📚</span> 参考来源 (DrugBank)
+            </h2>
+            <div id="citations" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+        </div>
+    </div>
+    
+    <!-- 错误提示 -->
+    <div id="error-area" class="hidden">
+        <div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 rounded shadow-sm" role="alert">
+            <p class="font-bold">❌ 出错了!</p>
+            <p id="error-message" class="mt-1"></p>
+        </div>
+    </div>
+</div>
+
+<script>
+async function askQuestion() {
+    const questionInput = document.getElementById('question');
+    const fdaOnlyCheckbox = document.getElementById('fda_only');
+    const submitBtn = document.getElementById('submit-btn');
+    const btnText = document.getElementById('btn-text');
+    const btnLoading = document.getElementById('btn-loading');
+    const resultArea = document.getElementById('result-area');
+    const errorArea = document.getElementById('error-area');
+    const answerDiv = document.getElementById('answer');
+    const citationsDiv = document.getElementById('citations');
+    const errorMessage = document.getElementById('error-message');
+
+    const question = questionInput.value.trim();
+    if (!question) {
+        alert("请输入问题！");
+        return;
+    }
+
+    // UI: 加载中
+    submitBtn.disabled = true;
+    btnText.textContent = "思考中...";
+    btnLoading.classList.remove('hidden');
+    resultArea.classList.add('hidden');
+    errorArea.classList.add('hidden');
+
+    try {
+        const response = await fetch('/api/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                question: question,
+                top_k: 3,
+                fda_only: fdaOnlyCheckbox.checked
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // 渲染回答
+        answerDiv.textContent = data.answer;
+        
+        // 渲染引用
+        citationsDiv.innerHTML = '';
+        if (data.citations && data.citations.length > 0) {
+            data.citations.forEach((cite, index) => {
+                const card = document.createElement('div');
+                card.className = "bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition border border-gray-100";
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="font-bold text-blue-600 text-sm">[${index + 1}] ${cite.drug_name}</span>
+                            <span class="text-xs text-gray-400 ml-2 bg-gray-100 px-2 py-0.5 rounded">${cite.drugbank_id}</span>
+                            <div class="text-xs text-gray-500 mt-1">字段: ${cite.field}</div>
+                        </div>
+                        <a href="https://go.drugbank.com/drugs/${cite.drugbank_id}" target="_blank" class="text-blue-500 hover:text-blue-700 text-xs font-semibold underline">查看详情 &rarr;</a>
+                    </div>
+                `;
+                citationsDiv.appendChild(card);
+            });
+        } else {
+            citationsDiv.innerHTML = '<p class="text-gray-500 italic">暂无引用来源。</p>';
+        }
+
+        resultArea.classList.remove('hidden');
+
+    } catch (error) {
+        console.error('Query failed:', error);
+        errorMessage.textContent = error.message;
+        errorArea.classList.remove('hidden');
+    } finally {
+        submitBtn.disabled = false;
+        btnText.textContent = "🔍 查询";
+        btnLoading.classList.add('hidden');
+    }
+}
+
+// 支持回车提交
+document.getElementById('question').addEventListener('keypress', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        askQuestion();
+    }
+});
+</script>
+{% endblock %}
